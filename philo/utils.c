@@ -47,9 +47,10 @@ size_t	ft_strlen(char *s)
 
 void	display_error(char *message)
 {
-	write(2, "Error: ", 7);
-	write(2, message, ft_strlen(message));
-	write(2, "\n", 1);
+	if (write(2, "Error: ", 7) < 0
+		|| write(2, message, ft_strlen(message)) < 0
+		|| write(2, "\n", 1) < 0)
+		return ;
 }
 
 void	print_status(t_philo *philo, const char *status, int force_print)

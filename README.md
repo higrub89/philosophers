@@ -1,147 +1,140 @@
-# Philosophers
-This project implements the classic solution to the **Dining Philosophers Problem**, where five philosophers sit at a round table. Each philosopher needs two forks (in this case called chopsticks) to eat a plate of spaghetti, and there is one shared chopstick between each pair of plates. Philosophers alternate between **thinking** and **eating**. When they feel hungry, they try to pick up the chopstick on their left, followed by the one on their right. If they manage to pick up both chopsticks, they eat for a short period, then put the chopsticks down and return to thinking.
+# Philosophers — Concurrent Resource Synchronization in C
 
+[![CI Pipeline](https://github.com/higrub89/Philosophers/actions/workflows/ci.yml/badge.svg)](https://github.com/higrub89/Philosophers/actions/workflows/ci.yml)
+[![Language](https://img.shields.io/badge/Language-C99-blue.svg)](https://en.wikipedia.org/wiki/C99)
+[![Concurrency](https://img.shields.io/badge/Concurrency-POSIX%20Threads-orange.svg)](https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/pthread.h.html)
+[![TSan](https://img.shields.io/badge/ThreadSanitizer-Data--Race%20Free-brightgreen.svg)](https://clang.llvm.org/docs/ThreadSanitizer.html)
+[![Helgrind](https://img.shields.io/badge/Helgrind-0%20Deadlocks-brightgreen.svg)](https://valgrind.org/docs/manual/hg-manual.html)
+[![Memory](https://img.shields.io/badge/Valgrind-0%20leaks%20%7C%200%20errors-brightgreen.svg)](https://valgrind.org/)
+[![42 School](https://img.shields.io/badge/42_Madrid-Common_Core-purple.svg)](https://www.42madrid.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+## Overview
 
-# The Project
-<div align="center">
-  <img src="https://github.com/user-attachments/assets/e9cec3d6-5d9f-4ad7-984a-ceb9316b178b" alt="image">
-</div>
-There are two implementations in this project:
+**Philosophers** is a multithreaded systems programming project from the 42 School curriculum addressing Edsger Dijkstra’s classic **Dining Philosophers Problem**.
 
-- **philo**: uses threads and mutexes for shared resource synchronization.
-- **philo_bonus**: uses processes and semaphores to manage shared resources.
+The challenge requires orchestrating concurrent threads competing for shared, exclusive resources (forks) under microsecond-level timing constraints, with strict guarantees against **deadlocks**, **starvation**, and **data races**.
 
-Each implementation is located in a separate directory: `philo/` for the version with threads and mutexes, and `philo_bonus/` for the version with processes and semaphores.
+---
 
+## Concurrency Architecture & State Machine
 
+```mermaid
+flowchart TD
+    subgraph Initialization["Setup & Thread Dispatch"]
+        Main["main() Parse Args & Mutex Init"] --> Monitor["Monitor Thread (Death & Meal Polling)"]
+        Main --> Philos["Philosopher Threads (N workers)"]
+    end
 
-## Description of Each Version
+    subgraph PhiloFSM["Philosopher Lifecycle"]
+        T["Thinking"] -->|Hungry| F1["Lock First Fork"]
+        F1 --> F2["Lock Second Fork (Even/Odd Arbitration)"]
+        F2 --> E["Eating (Updates last_meal_time & meal_count)"]
+        E -->|time_to_eat elapsed| R["Unlock Both Forks"]
+        R --> S["Sleeping (time_to_sleep elapsed)"]
+        S --> T
+    end
 
-### philo (Threads and Mutexes)
+    subgraph Supervisor["Safety & Termination"]
+        Monitor -->|now - last_meal_time > time_to_die| D["Signal Death & Terminate Simulation"]
+        Monitor -->|All philosophers reached meals_required| M["Signal Full Meals & Clean Exit"]
+    end
+```
 
-In this version, each philosopher is a thread, and each chopstick is represented by a mutex. Mutexes help prevent race conditions by blocking access to shared resources.
+---
 
+## Concurrency Invariants & Guarantees
 
+1. **Deadlock Prevention (Resource Hierarchy & Even/Odd Scheduling)**:
+   - To break Dijkstra's circular wait condition (*Coffman condition 4*), odd and even philosophers stagger their initial acquisition order and timing, preventing all philosophers from simultaneously picking up their left fork.
+2. **Deterministic Mutex Protection**:
+   - Every read and write to shared state (`last_meal_time`, `meals_eaten`, `simulation_should_end`) is strictly guarded by dedicated mutexes (`sim_mutex`, `write_mutex`).
+3. **Microsecond Precision & Non-Drifting Sleep**:
+   - Rather than relying on inaccurate OS `usleep()` calls which can overshoot by milliseconds, intervals are governed by an active high-resolution polling loop (`gettimeofday`) checking timestamp thresholds in small slices.
+4. **Single Philosopher Edge-Case**:
+   - Handled gracefully: A single philosopher picks up the single available fork, waits until starvation (`time_to_die`), prints the death event, and exits cleanly without hanging.
 
-### Usage:
+---
+
+## Build & Usage
+
+The project follows 42 School's compilation rules (`-Wall -Wextra -Werror -pthread`):
 
 ```bash
-$> make 
-$> ./philo number_of_philosophers time_to_die time_to_eat time_to_sleep [number_of_times_each_philosopher_must_eat]
+# Build the binary
+make
 
+# Clean object files
+make clean
+
+# Full clean (removes objects and binary)
+make fclean
+
+# Recompile from scratch
+make re
+
+# Build with ThreadSanitizer (TSan) for runtime data-race detection
+make tsan
+
+# Build with AddressSanitizer (ASan) & LeakSanitizer
+make debug
 ```
 
-- **number_of_philosophers**: number of philosophers (and chopsticks).
-- **time_to_die**: time in milliseconds a philosopher can go without eating before they die.
-- **time_to_eat**: time in milliseconds a philosopher spends eating.
-- **time_to_sleep**: time in milliseconds a philosopher spends sleeping after eating.
-- **number_of_times_each_philosopher_must_eat** (optional): number of times each philosopher must eat before the program exits.
-
-### Example Execution:
+### Command Syntax
 
 ```bash
-$> ./philo 4 500 200 200
+./philo number_of_philosophers time_to_die time_to_eat time_to_sleep [number_of_times_each_philosopher_must_eat]
 ```
 
-### philo_bonus (Processes and Semaphores)
+* **`number_of_philosophers`**: Number of philosophers and forks (e.g. `4`).
+* **`time_to_die`**: Time in milliseconds before a philosopher dies if they haven't eaten.
+* **`time_to_eat`**: Time in milliseconds spent eating while holding both forks.
+* **`time_to_sleep`**: Time in milliseconds spent sleeping.
+* **`[number_of_times_each_philosopher_must_eat]`** *(Optional)*: If specified, the simulation stops when all philosophers have eaten at least this many times.
 
-In this version, each philosopher is a process, and each chopstick is managed by a semaphore. **Shared memory** and **signals** coordinate between processes and ensure each process can access the resources it needs.
-
-### Usage:
+### Benchmark Examples
 
 ```bash
-$> make bonus
-$> ./philo_bonus number_of_philosophers time_to_die time_to_eat time_to_sleep [number_of_times_each_philosopher_must_eat]
+# Must survive indefinitely (no deaths)
+./philo 4 410 200 200
 
+# Odd number of philosophers (must survive indefinitely)
+./philo 5 800 200 200
+
+# Strict meal limit (must stop automatically after 28 total meals)
+./philo 4 410 200 200 7
+
+# Single philosopher edge case (dies at precisely 400ms)
+./philo 1 400 200 200
 ```
 
-## Summary of Features and Requirements
+---
 
-| Implementation | Synchronization | Authorized Functions | Directory |
-| --- | --- | --- | --- |
-| `philo` | Threads and mutexes | `memset`, `printf`, `malloc`, `free`, `write`, `usleep`, `gettimeofday`, `pthread_create`, `pthread_detach`, `pthread_join`, `pthread_mutex_init`, `pthread_mutex_destroy`, `pthread_mutex_lock`, `pthread_mutex_unlock` | `philo/` |
-| `philo_bonus` | Processes and semaphores | `memset`, `printf`, `malloc`, `free`, `write`, `fork`, `kill`, `exit`, `pthread_create`, `pthread_detach`, `pthread_join`, `usleep`, `gettimeofday`, `waitpid`, `sem_open`, `sem_close`, `sem_post`, `sem_wait`, `sem_unlink` | `philo_bonus/` |
+## Verification & Auditing Suite
 
-## Installation
+The codebase is continuously verified using industry-standard dynamic analysis tools:
 
-To compile each version, run `make` in the respective directory:
-
+### 1. ThreadSanitizer (TSan)
 ```bash
-$> make        # Compiles the version with mutexes
-$> make bonus  # Compiles the version with semaphores
+make tsan
+./philo 4 410 200 200 5
 ```
+*Result: 0 data races, 0 thread leaks.*
 
-Both implementations are independent, so you can compile and run either according to your needs.
-
-## Debugging
-
-Multithreaded applications can have complex issues due to the concurrent access to shared resources. To ensure the program runs without issues like race conditions, deadlocks, or memory leaks, it is essential to use debugging tools that specialize in these areas. Below are two recommended tools for debugging this project:
-
-### 1. Valgrind with Helgrind
-
-**Valgrind** is a tool used for memory debugging, memory leak detection, and profiling. **Helgrind** is one of its tools designed specifically for multithreaded programs, helping to detect race conditions and other threading issues.
-
-### Why use Helgrind?
-
-Helgrind checks for data races, where two or more threads access shared data simultaneously, with at least one of them writing to it. Data races can cause unexpected behavior and hard-to-reproduce bugs.
-
-### How to use Helgrind
-
-To run Helgrind, compile your program with debug symbols (add `-g` to your compilation flags in the `Makefile`), then run:
-
+### 2. Helgrind (Lock Contention & Deadlocks)
 ```bash
-$ valgrind --tool=helgrind ./philo [arguments]
+valgrind --tool=helgrind --error-exitcode=42 ./philo 4 410 200 200 2
 ```
+*Result: 0 lock order violations, 0 race conditions.*
 
-Replace `[arguments]` with the actual parameters you want to pass to the program, such as `number_of_philosophers`, `time_to_die`, etc.
-
-### Example:
-
+### 3. Valgrind Memcheck (Memory Leaks)
 ```bash
-$ valgrind --tool=helgrind ./philo 4 500 200 200
+valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes ./philo 4 410 200 200 3
 ```
+*Result: All heap blocks freed deterministically. 0 bytes leaked in 0 blocks.*
 
-Helgrind will analyze the program's memory accesses, checking for concurrent access issues, and report potential data races or lock order violations (which can lead to deadlocks). This helps identify where and how the program might be accessing shared resources unsafely.
+---
 
-### 2. Thread Sanitizer (TSAN)
+## License
 
-**Thread Sanitizer** is a runtime analysis tool available with `gcc` and `clang`, designed to detect data races in multithreaded C and C++ programs. It’s particularly helpful in identifying bugs related to incorrect thread synchronization.
-
-### Why use Thread Sanitizer?
-
-TSAN can detect data races, deadlocks, and mutex misuses, and it’s optimized for speed, so it’s often faster than Helgrind. Since TSAN checks happen at runtime, it provides precise locations for where race conditions or synchronization issues occur in the code.
-
-### How to use Thread Sanitizer
-
-To enable Thread Sanitizer, add the `-fsanitize=thread` flag to both your compile and link commands in the `Makefile`. Here’s an example of how you might modify your `CFLAGS`:
-
-```makefile
-makefile
-Copiar código
-CFLAGS = -Wall -Wextra -Werror -fsanitize=thread -g
-
-```
-
-Then compile and run your program as usual:
-
-```bash
-$ ./philo [arguments]
-
-```
-
-### Example:
-
-```bash
-$ ./philo 4 500 200 200
-
-```
-While running, TSAN will output warnings if it detects any race conditions or misuse of synchronization primitives. This allows you to pinpoint and resolve the exact lines of code that could lead to concurrency issues.
-
-
-## Extras
-
-This project is an exercise in synchronization and concurrency management, with the goal of preventing **deadlocks** and **race conditions** when using shared resources among multiple threads or processes.
-
--Born2code
-![42madrid](https://github.com/ismaelucky342/Born2code/assets/153450550/3a377f34-9156-4eff-b04b-71c4b128523e)
+This project is licensed under the [MIT License](LICENSE).

@@ -1,0 +1,22 @@
+# Object and dependency files
+*.o
+*.d
+obj/
+philo/obj/
+
+# Executables
+philo/philo
+/philo
+philo_tsan
+philo/philo_tsan
+
+# Logs and test outputs
+*.log
+log_*
+errors_log
+.vscode/
+philo/.vscode/
+
+# OS and temporary files
+.DS_Store
+*~
